@@ -1,9 +1,15 @@
+#include "stm32f10x.h"
+#include "sys.h"
+#include "motor.h" 
 #include "control_system.h"
+#include <string.h>
+
+//从串口文件引入接收标志与解析缓存
+extern u8 uart_rec_flag;
+extern u8 CAR_buff[4];
 
 u16 Read_Encoder(u8 ch);
 void Set_Pwm(int motoA,int motoB);
-
-//typedef enum { false = 0,true = 1} bool;
 
 /*电机 左A 右B*/
 int L_coder,R_coder;
@@ -13,17 +19,14 @@ int OverflowTime=100;
 volatile uint32_t millis = 0;	// 记录毫秒数
 volatile uint32_t seconds = 0;	// 记录秒数
 
+//保存串口下发的目标转速
+float Target_MotorA = 0.0f;
+float Target_MotorB = 0.0f;
+
 /*********************************************************
 函数功能:增量式PI控制器
 入口参数:编码器测量值,目标速度
 返回 值: 电机PWM公式
-根据增量式离散PID公式
-pwm+=Kp[e（k）-e(k-1)]+Ki*e(k)+Kd[e(k)-2e(k-1)+e(k-2)]
-e(k)代表本次偏差
-e(k-1)代表上一次的偏差  以此类推
-pwm代表增量输出
-在我们的速度控制闭环系统里面,只使用PD控制
-pwm+=Kd[e（k）-e(k-1)]+Kp*e(k)
 *********************************************************/
 int Incremental_PI_A(int Encoders_A, int Target_A)
 {
@@ -55,9 +58,6 @@ int Incremental_PI_A(int Encoders_A, int Target_A)
 
 int Incremental_PI_B(int Encoders_B, int Target_B)
 {
-	//参数与Incremental_PI_A中不一致，因电机的批次或者安装的影响，阻力不同，需要不同的P值
-	//电机阻力越大，P值相应的增大一些，保持两个电机几乎同时达到目标转速
-	//若追求效果可以调整I和D
 	float Velocity_KP = 7.0, Velocity_KI = 0.016, Velocity_KD = 0.003;
 	static int Pwm_B = 0;
 	static int Integral_B = 0;
@@ -88,10 +88,9 @@ int Incremental_PI_B(int Encoders_B, int Target_B)
 函数功能: 转每秒转脉冲数函数
 入口参数: float
 返回 值: int
-电机ppr: 700，倍频4
-设定电机转速为1转/s，已知电机1转产生(700*4)脉冲，则每100ms产生的脉冲数为: (700*4)/(1000/100),单位: 脉冲数/100ms
 *********************************************************/
-int Rs_To_CPR(float rads){ // 取值范围: -1.5 ~ 1.5, 即最大设定转速为1.5转/s
+int Rs_To_CPR(float rads)
+{
 	int CRP=0;
 	CRP=rads * ((700*4)/(1000/OverflowTime));
 	return CRP;
@@ -104,33 +103,44 @@ int Rs_To_CPR(float rads){ // 取值范围: -1.5 ~ 1.5, 即最大设定转速为1.5转/s
 *********************************************************/
 void System_Control(void)
 {
-	//理论编码器值
 	int TageA=0;
 	int TageB=0;
-	//读取OverflowTime ms时间的脉冲数
+
 	L_coder=Read_Encoder(2);
 	R_coder=Read_Encoder(3);
 	printf("left_coder : %d\r\n",L_coder);
 	printf("right_coder : %d\r\n",R_coder);
 
-	//计算OverflowTime时间转每秒的速度应达到的编码器值
-	TageA=Rs_To_CPR(1.0);
-	TageB=Rs_To_CPR(-1.0);
+	//接收鸿蒙串口下发指令
+	if(uart_rec_flag)
+	{
+		Target_MotorA=CAR_buff[1]/100.00f;
+		Target_MotorB=CAR_buff[3]/100.00f;
+
+		if(CAR_buff[0]==1)
+		{
+			Target_MotorA=-1*Target_MotorA;
+		}
+		if(CAR_buff[2]==1)
+		{
+			Target_MotorB=-1*Target_MotorB;
+		}
+
+		uart_rec_flag=0;
+		memset(CAR_buff,0,4);
+	}
+
+	TageA=Rs_To_CPR(Target_MotorA);
+	TageB=Rs_To_CPR(Target_MotorB);
+
 	printf("TageA coder : %d\r\n",TageA);
 	printf("TageB coder : %d\r\n",TageB);
 
-	//速度闭环控制计算电机b最终PWM 角度电机转动
-	Motor_A=Incremental_PI_A(L_coder,TageA);			////===速度闭环控制计算电机A最终PWM
+	Motor_A=Incremental_PI_A(L_coder,TageA);
 	Motor_B=Incremental_PI_B(R_coder,TageB);
 
 	printf("Motor_A pwm : %d\r\n",Motor_A);
 	printf("Motor_B pwm : %d\r\n",Motor_B);
 
-	Set_Pwm(Motor_A,Motor_B);	//设置电机转速
+	Set_Pwm(Motor_A,Motor_B);
 }
-
-/**
- * @brief  系统滴答定时器中断服务函数
- * @param  None
- * @retval None
- */
