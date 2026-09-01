@@ -1,0 +1,17 @@
+import("//build/lite/config/component/lite_component.gni")
+
+static_library("correspondence") {
+    sources = [
+        "correspondence.c",
+    ]
+    include_dirs = [
+        "//base/iot_hardware/interfaces/kits/wifiiot_lite",
+        "//utils/native/lite/include",
+        "//third_party/cmsis/CMSIS/RTOS2/Include",
+        "//vendor/hisi/hi3861/hi3861/sdk",
+    ]
+    deps = [
+        "//base/iot_hardware/frameworks/wifiiot_lite/src:iothardware",
+        "//vendor/hisi/hi3861/hi3861_adapter/hals/iot_hardware/wifiiot_lite:hal_iothardware",
+    ]
+}
